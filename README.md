@@ -1,15 +1,5 @@
 # FCSpikes
 
-This folder contains:
-- **Inputs (data)** under `data/` (CSV + TXT)
-- **Outputs (figures)** under `figures/` (general FC spikes outputs)
-- **Beam Plug current/discharge study workspace** under `BPcurrentStudy/` (scripts + outputs + state)
-- **Analysis scripts** under `src/` (some are wrappers into `BPcurrentStudy/src/`)
-
-The main goal of this repo layout is:
-1) keep the raw inputs organized and stable, and
-2) make scripts runnable without hard-coded absolute paths.
-
 ## Directory layout
 
 - `data/csv/beam/<Month>/BEAM_<Day>.csv`
@@ -23,7 +13,7 @@ The main goal of this repo layout is:
 These scripts require `numpy`, `matplotlib`, and `scipy`.
 
 Tip: most scripts use repo-relative paths (no hard-coded absolute paths). If you want to point
-the code at a different input tree, set:
+The code at a different input tree, set:
 
 ```bash
 export FCSPIKES_DATA_DIR=/path/to/data
@@ -132,7 +122,7 @@ Function: `detect_spikes_with_savgol(dates, currents_uA, ...)`
    `residual = baseline - currents_uA`
 
    Interpretation:
-   - A downward excursion of the current (dip) makes `baseline - current` positive.
+   - A downward excursion of the current (dip) makes the `baseline - current` positive.
    - Spikes are detected as positive peaks in this residual.
 
 3. Peak finding:
@@ -232,7 +222,7 @@ If the exponential fit fails, the script falls back to `--tau-fixed-s` for charg
 - For the per-plateau plots, the script also computes a **mean fitted tau** per plateau using only valid fits (finite, $\tau>0$, and $\tau\le 100$ s) and annotates it on the plot.
 
 Notes:
-- Fit overlays and the tau histogram ignore fitted values with $\tau > 100$ s (to avoid plotting obviously-bad fits).
+- Fit overlays, and the tau histogram ignore fitted values with $\tau > 100$ s (to avoid plotting obviously-bad fits).
 - Spikes with prominence above `--max-prominence-uA` (default 1.5 µA) are rejected.
 
 ### Uncertainty/error bars in the summary plot
