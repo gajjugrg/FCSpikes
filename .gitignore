@@ -1,0 +1,21 @@
+# Python
+.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store
+
+# Local data + outputs (keep scripts only by default)
+data/
+figures/
+
+# Local reports
+redundant_report.json
+
+# Archives created by the prune helper
+src/legacy_redundant_*/
+
+# Legacy subproject (optional)
+BPcurrentStudy/
