@@ -40,6 +40,17 @@ python src/hv_ramp_plateau_summary.py \
 # Writes: figures/analysis/hv_ramping_spike_study/
 python src/hv_ramping_top_bottom_spike_summary.py --save-plots --show-plots
 
+# HV ramping FC spike summary with exclusive spikes and exp-fit charge
+# - Remove coincident Top/Bottom spikes
+# - Use exponential-fit charge and save diagnostics
+python src/hv_ramping_top_bottom_spike_summary.py \
+  --exclusive-spikes \
+  --coincidence-window-s 2 \
+  --charge-method exp_fit \
+  --exp-fit-diagnostics save \
+  --exp-fit-diagnostics-max 10 \
+  --save-plots
+
 # HV ramping (Top detector only; plateau-binned, with tau fits)
 # Writes: figures/analysis/hv_ramping_spike_study/
 python src/hv_ramping_top_detector_by_plateau.py --save-plots
@@ -80,7 +91,7 @@ python BPcurrentStudy/src/currentDischargeStudy.py --folder BPcurrentStudy/data/
 Notes:
 - macOS may create `._*.csv` AppleDouble files on external drives; the scripts generally ignore these.
 - CH3-vs-CH1 scatter uses a cache in `BPcurrentStudy/data/current_discharge_study/` to speed reruns.
-- Charge integration is **onset-relative**: we detect a CH3 onset time `t0` and integrate in a window of `(TIME - t0) ∈ [0, tmax]` to avoid mixing pre-trigger time into the integral.
+- CH3/CH1 charge integration for the CH3-vs-CH1 scatter matches the per-event overlays: integrate the **signed baseline-subtracted** smoothed waveform in a fixed time window `TIME ∈ [0, tmax]` (negative-going CH3 pulses yield negative charge).
 - CSV loading removes `±inf` samples (which can appear on saturated scope channels) and keeps `df.attrs["ch*_saturated"]` flags for QA.
 
 ### Auto-classification (waveform shape)

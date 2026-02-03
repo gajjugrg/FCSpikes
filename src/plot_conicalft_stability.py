@@ -8,6 +8,12 @@ import pandas as pd
 
 from utilities import fcspikes_root, figures_root
 
+LABEL_FONT_SIZE = 14
+TITLE_FONT_SIZE = 16
+TICK_FONT_SIZE = 12
+LEGEND_FONT_SIZE = 12
+FONT_WEIGHT = "bold"
+
 
 def _read_conicalft_stability_csv(path: Path) -> pd.DataFrame:
     # This CSV has 2 header rows:
@@ -245,12 +251,14 @@ def main() -> None:
     ax2 = ax.twinx()
 
     voltage_label_kv = f"{args.voltage_column} (kV)"
-    ax.plot(df["time"], df[args.voltage_column] / 1000.0, color="tab:blue", linewidth=0.8, label=voltage_label_kv)
-    ax2.plot(df["time"], df[args.current_column], color="tab:orange", linewidth=0.8, label=args.current_column)
-    ax.set_xlabel("Time")
-    ax.set_ylabel(voltage_label_kv)
-    ax2.set_ylabel(args.current_column)
-    ax.set_title("Conical Feedthrough stability")
+    ax.plot(df["time"], df[args.voltage_column] / 1000.0, color="tab:blue", linewidth=0.9, label=voltage_label_kv)
+    ax2.plot(df["time"], df[args.current_column], color="tab:red", linewidth=0.9, label=args.current_column)
+    ax.set_xlabel("Time", fontsize=LABEL_FONT_SIZE, fontweight=FONT_WEIGHT)
+    ax.set_ylabel(voltage_label_kv, fontsize=LABEL_FONT_SIZE, fontweight=FONT_WEIGHT)
+    ax2.set_ylabel(args.current_column, fontsize=LABEL_FONT_SIZE, fontweight=FONT_WEIGHT)
+    ax.set_title("Conical Feedthrough stability", fontsize=TITLE_FONT_SIZE, fontweight=FONT_WEIGHT)
+    ax.tick_params(axis="both", labelsize=TICK_FONT_SIZE)
+    ax2.tick_params(axis="y", labelsize=TICK_FONT_SIZE)
     ax.grid(True, alpha=0.3)
 
     plateau_label: str | None = None
@@ -284,7 +292,13 @@ def main() -> None:
         labels.append(plateau_label)
 
     if handles:
-        ax.legend(handles, labels, loc="best", framealpha=0.9)
+        ax.legend(
+            handles,
+            labels,
+            loc="best",
+            framealpha=0.9,
+            prop={"size": LEGEND_FONT_SIZE, "weight": FONT_WEIGHT},
+        )
 
     fig.autofmt_xdate()
     plt.tight_layout()

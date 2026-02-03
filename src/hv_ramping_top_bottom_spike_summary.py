@@ -15,6 +15,7 @@ This script:
 Outputs:
 - Summary plots: figures/analysis/hv_ramping_spike_study/summary_<tag>_top.png and ..._bottom.png
 - Optional spike timestamps+charge: data/txt/spike_timestamps/spike_timestamps_<tag>_{top|bottom}.txt
+- Optional overlay plot: figures/analysis/hv_ramping_spike_study/cathode_voltage_top_bottom_current_<tag>.png
 """
 
 from __future__ import annotations
@@ -466,6 +467,100 @@ def _read_hvramping_csv(path: Path) -> pd.DataFrame:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
     return df
+
+
+def _read_hv_ramp_voltage_kv(paths: list[Path]) -> pd.Series:
+    """Read HV ramp CSV(s) and return cathode voltage in kV as a single time series."""
+
+    frames = []
+    for path in paths:
+        df = pd.read_csv(path, header=1)
+        df = df.drop(columns=[c for c in df.columns if str(c).strip() == "" or str(c).startswith("Unnamed")], errors="ignore")
+
+        time_col = df.columns[0]
+        df = df.rename(columns={time_col: "timestamp"})
+        df["timestamp"] = pd.to_datetime(df["timestamp"], format="%Y/%m/%d %H:%M:%S.%f", errors="coerce")
+        df = df.dropna(subset=["timestamp"]).set_index("timestamp").sort_index()
+
+        if df.empty:
+            continue
+
+        # Normalize column name whitespace to find the voltage column.
+        col_map = {str(c).strip(): c for c in df.columns}
+        if "Voltage [V]" in col_map:
+            voltage_col = col_map["Voltage [V]"]
+        else:
+            candidates = [orig for name, orig in col_map.items() if ("Voltage" in name and "Current" not in name)]
+            if not candidates:
+                raise ValueError(f"No voltage column found in {path}. Columns: {list(df.columns)}")
+            voltage_col = candidates[0]
+
+        v = pd.to_numeric(df[voltage_col], errors="coerce").dropna()
+        if not v.empty:
+            frames.append(v)
+
+    if not frames:
+        return pd.Series(dtype=float)
+
+    merged = pd.concat(frames).sort_index()
+    merged = merged[~merged.index.duplicated(keep="first")]
+    merged = merged.dropna()
+    merged = merged / 1000.0
+    merged.name = "cathode_voltage_kV"
+    return merged
+
+
+def _plot_cathode_voltage_and_termination_currents(
+    voltage_kv: pd.Series,
+    top_current_uA: pd.Series,
+    bottom_current_uA: pd.Series,
+    *,
+    title: str,
+    save_path: Path | None,
+    show_plot: bool,
+) -> None:
+    if voltage_kv.empty or top_current_uA.empty or bottom_current_uA.empty:
+        print("Skipping cathode overlay plot: missing voltage or current data.")
+        return
+
+    # Restrict to the common time span for a cleaner overlay.
+    t0 = max(voltage_kv.index.min(), top_current_uA.index.min(), bottom_current_uA.index.min())
+    t1 = min(voltage_kv.index.max(), top_current_uA.index.max(), bottom_current_uA.index.max())
+    if t1 <= t0:
+        print("Skipping cathode overlay plot: no overlapping time range.")
+        return
+
+    v = voltage_kv[(voltage_kv.index >= t0) & (voltage_kv.index <= t1)]
+    top = top_current_uA[(top_current_uA.index >= t0) & (top_current_uA.index <= t1)]
+    bottom = bottom_current_uA[(bottom_current_uA.index >= t0) & (bottom_current_uA.index <= t1)]
+
+    fig, ax_v = plt.subplots(figsize=(14, 6))
+    ax_i = ax_v.twinx()
+
+    line_v = ax_v.plot(v.index, v.to_numpy(dtype=float), color="tab:blue", lw=1.2, label="Cathode voltage")
+    line_t = ax_i.plot(top.index, top.to_numpy(dtype=float), color="tab:red", lw=1.0, label="Top termination current")
+    line_b = ax_i.plot(bottom.index, bottom.to_numpy(dtype=float), color="tab:green", lw=1.0, label="Bottom termination current")
+
+    ax_v.set_xlabel("Time")
+    ax_v.set_ylabel("Cathode voltage [kV]", color="tab:blue")
+    ax_i.set_ylabel("Termination current [µA]", color="black")
+    ax_v.grid(True, alpha=0.25)
+
+    lines = line_v + line_t + line_b
+    labels = [l.get_label() for l in lines]
+    ax_v.legend(lines, labels, loc="best")
+    ax_v.set_title(title)
+
+    fig.autofmt_xdate()
+    plt.tight_layout()
+
+    if save_path is not None:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path)
+        print(f"Saved cathode overlay plot to {save_path}")
+    if show_plot:
+        plt.show()
+    plt.close(fig)
 
 
 def _channel_cols(prefix: str, channels: Iterable[int]) -> list[str]:
@@ -1449,6 +1544,14 @@ def _write_spike_timestamps(
 
 def main() -> None:
     ramp_dir = fcspikes_root() / "csv" / "ramping"
+    default_hv_candidates = [
+        ramp_dir / "HV_ramp_Nov27.csv",
+        ramp_dir / "HV_ramp_Dec6.csv",
+        ramp_dir / "HV_ramp_Dec15.csv",
+    ]
+    default_hv_paths = [p for p in default_hv_candidates if p.exists()]
+    if not default_hv_paths:
+        default_hv_paths = sorted(ramp_dir.glob("HV_ramp_*.csv"))
 
     parser = argparse.ArgumentParser(
         description="HV ramping spike summary for Top/Bottom (BEAM+TCO combined).",
@@ -1464,6 +1567,12 @@ def main() -> None:
         nargs="+",
         default=[str(ramp_dir / "TCO_HVRamping.csv"), str(ramp_dir / "TCO_HVRamping2.csv")],
         help="One or more TCO ramping CSV files (default: TCO_HVRamping(.csv|2.csv)).",
+    )
+    parser.add_argument(
+        "--hv-ramp",
+        nargs="*",
+        default=None,
+        help="HV ramp CSV(s) used for cathode voltage overlay (default: HV_ramp_*.csv under data/csv/ramping).",
     )
     parser.add_argument(
         "--tag",
@@ -1649,6 +1758,12 @@ def main() -> None:
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Show summary plots interactively.",
+    )
+    parser.add_argument(
+        "--plot-cathode-overlay",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Plot cathode voltage with top/bottom termination currents in one overlay plot.",
     )
 
     args = parser.parse_args()
@@ -2188,6 +2303,46 @@ def main() -> None:
 
     top_current_a = load_detector_series(TOP)
     bottom_current_a = load_detector_series(BOTTOM)
+
+    if args.plot_cathode_overlay:
+        if args.hv_ramp is None:
+            hv_paths = default_hv_paths
+        else:
+            hv_paths = [Path(p).expanduser() for p in args.hv_ramp if str(p).strip() != ""]
+
+        missing = [p for p in hv_paths if not p.exists()]
+        if missing:
+            print("Skipping missing HV ramp files for cathode overlay:")
+            for p in missing:
+                print(f"  - {p}")
+        hv_paths = [p for p in hv_paths if p.exists()]
+
+        if not hv_paths:
+            print("No HV ramp CSVs provided for cathode overlay plot.")
+        else:
+            voltage_kv = _read_hv_ramp_voltage_kv(hv_paths)
+            if not voltage_kv.empty:
+                voltage_df = _apply_exclusions(voltage_kv.to_frame("voltage_kv"), EXCLUDED_TIME_INTERVALS)
+                voltage_kv = voltage_df["voltage_kv"]
+
+            top_current_uA = (top_current_a * 1e6).dropna()
+            bottom_current_uA = (bottom_current_a * 1e6).dropna()
+
+            analysis_dir = figures_root() / "analysis" / "hv_ramping_spike_study"
+            tag_suffix = f"_{args.tag}" if args.tag else ""
+            save_path = (analysis_dir / f"cathode_voltage_top_bottom_current{tag_suffix}.png") if args.save_plots else None
+            title = (
+                f"Cathode voltage and termination currents"
+                f"{(' (' + args.tag + ')') if args.tag else ''}"
+            )
+            _plot_cathode_voltage_and_termination_currents(
+                voltage_kv,
+                top_current_uA,
+                bottom_current_uA,
+                title=title,
+                save_path=save_path,
+                show_plot=args.show_plots,
+            )
 
     analyze("Top", top_current_a, (bottom_current_a if args.exclusive_spikes else None))
     analyze("Bottom", bottom_current_a, (top_current_a if args.exclusive_spikes else None))

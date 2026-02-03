@@ -15,6 +15,7 @@ TIME_FMT = "%Y/%m/%d %H:%M:%S.%f"
 
 DRIFT_DISTANCE_CM = 338.6
 FIELD_SCALE = (1000.0 / DRIFT_DISTANCE_CM) * 0.9976287  # V/cm per kV
+AXIS_LABEL_FONTSIZE = 14
 
 
 def termination_voltage_kv(t: datetime, *, change_time: datetime) -> float:
@@ -155,13 +156,13 @@ def plot_voltage_and_current(
 				f"{mean_e:.1f} V/cm\n{duration_h:.1f} h",
 				ha="center",
 				va="bottom",
-				fontsize=9,
+				fontsize=14,
 				color="black",
 			)
 
-	ax_v.set_xlabel("Time")
-	ax_v.set_ylabel(voltage_ylabel, color="tab:blue")
-	ax_i.set_ylabel("Current [µA]", color="tab:red")
+	ax_v.set_xlabel("Time", fontsize=AXIS_LABEL_FONTSIZE)
+	ax_v.set_ylabel(voltage_ylabel, color="tab:blue", fontsize=AXIS_LABEL_FONTSIZE)
+	ax_i.set_ylabel("Current [µA]", color="tab:red", fontsize=AXIS_LABEL_FONTSIZE)
 
 	# Ticks on both sides.
 	_style_axes(ax_v)
