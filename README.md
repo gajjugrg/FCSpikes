@@ -2,8 +2,8 @@
 
 ## Directory layout
 
-- `data/csv/beam/<Month>/BEAM_<Day>.csv`
-- `data/csv/tco/<Month>/TCO_<Day>.csv`
+- `data/beam-YYYY-MM-DD.csv`
+- `data/tco-YYYY-MM-DD.csv`
 - `BPcurrentStudy/data/current_discharge_study/` (state for Beam Plug current discharge study)
 - `BPcurrentStudy/figures/analysis/current_discharge_study/` (Beam Plug current discharge study plots)
 - `figures/daily/<Month>/` and `figures/aggregates/...` (outputs from other FC spike scripts)
@@ -226,7 +226,7 @@ The function returns a list of spikes where each spike record includes:
 
 Dictionary: `EXCLUDE_SPIKE_WINDOWS_BY_FILE`
 
-- Keys are BEAM basenames like `"BEAM_Dec5.csv"`.
+- Keys are BEAM basenames like `"beam-2025-12-05.csv"`.
 - Values are lists of `(start_datetime, end_datetime)`.
 
 In `summarize_dataset(...)`, after spike detection:
@@ -405,4 +405,4 @@ All shared helper functions live in `src/utilities.py`:
 - `project_root()` - returns the FCSpikes project root
 - `fcspikes_root()` - returns the data directory (respects `FCSPIKES_DATA_DIR` env var)
 - `beam_csv_glob()` / `tco_csv_glob()` - glob patterns for finding CSV files
-- `find_beam_csv(tag)` / `find_tco_csv(tag)` - locate specific CSV files by day tag
+- `find_beam_csv(tag)` / `find_tco_csv(tag)` - locate specific CSV files by day tag (YYYY-MM-DD or YYYYMMDD)

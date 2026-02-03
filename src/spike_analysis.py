@@ -3,14 +3,23 @@ import glob
 import os
 import re
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.dates import AutoDateLocator, DateFormatter
-from scipy.optimize import curve_fit
-from scipy.signal import savgol_filter, find_peaks
+from scipy.signal import find_peaks
 
-from utilities import fcspikes_root, figures_root, spike_timestamps_path
+from utilities import (
+    adaptive_savgol,
+    compute_total_discharge_charge,
+    fcspikes_root,
+    plot_overall_intervals,
+    plot_spike_distribution,
+    plot_spike_intervals_and_fit,
+    plot_spikes_with_baseline,
+    spike_timestamps_path,
+)
 
 PRESSURE_CHANGE_START = datetime(2026, 1, 29, 14, 0)
 PRESSURE_CHANGE_END = datetime(2026, 1, 29, 16, 0)
@@ -18,23 +27,6 @@ PRESSURE_CHANGE_END = datetime(2026, 1, 29, 16, 0)
 # Optional cable-switch exclusion window (set to None to disable).
 CABLE_SWITCH_START = None
 CABLE_SWITCH_END = None
-
-def _adaptive_savgol(y, window_length=51, polyorder=3):
-    y = np.asarray(y)
-    n = y.size
-    if n == 0:
-        return y
-    max_odd = n if (n % 2 == 1) else (n - 1)
-    wl = min(int(window_length), max_odd)
-    if wl <= polyorder:
-        wl = polyorder + 1 if ((polyorder + 1) % 2 == 1) else (polyorder + 2)
-        wl = min(wl, max_odd)
-        if wl <= polyorder:
-            return y.copy() 
-    try:
-        return savgol_filter(y, wl, polyorder, mode='nearest')
-    except Exception:
-        return y.copy()
 
 def _dequote_array(a):
     a = a.astype(str)
@@ -73,7 +65,7 @@ def load_combined_data(beam_file, tco_file):
     return dates, total_currents
 
 def detect_spikes_with_savgol(dates, currents_uA, threshold_uA=1e-3, window_length=101, polyorder=2):
-    baseline = _adaptive_savgol(currents_uA, window_length=window_length, polyorder=polyorder)
+    baseline = adaptive_savgol(currents_uA, window_length=window_length, polyorder=polyorder)
     residual = baseline - currents_uA
     peaks, props = find_peaks(residual, prominence=threshold_uA, width=1)
     results = []
@@ -84,155 +76,6 @@ def detect_spikes_with_savgol(dates, currents_uA, threshold_uA=1e-3, window_leng
         magnitude = mag
         results.append((ts, magnitude, spike_val, baseline_val))
     return results, baseline
-
-def plot_spike_distribution(spikes, input_file, threshold_uA, bins=30, value="magnitude", save_path=None, show_plot=True):
-    if not spikes:
-        return
-    if value == "magnitude":
-        spike_values = [mag for _, mag, _, _ in spikes]
-        x_label = "Magnitude (baseline - spike) [uA]"
-        title = "Distribution of Spike Magnitudes"
-    elif value == "spike":
-        spike_values = [val for _, _, val, _ in spikes]
-        x_label = "Spike Current (uA)"
-        title = "Distribution of Raw Spike Values"
-    else:
-        raise ValueError("value must be 'magnitude' or 'spike'")
-    fname = os.path.basename(input_file)
-    plt.figure(figsize=(8, 5))
-    plt.hist(spike_values, bins=bins, histtype='step', facecolor='lightblue', edgecolor='black')
-    plt.xlabel(x_label)
-    plt.ylabel("Count")
-    plt.title(title)
-    text = f"File: {fname}\nThreshold: {threshold_uA:.3f} uA\nNo. Spikes: {len(spikes)}"
-    plt.text(0.98, 0.95, text, transform=plt.gca().transAxes,
-             fontsize=9, va='top', ha='right')
-    plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path)
-    if show_plot:
-        plt.show()
-    plt.close()
-
-def plot_spikes_with_baseline(dates, currents_uA, spikes_info, baseline_uA, save_path=None, show_plot=True):
-    plt.figure(figsize=(14, 5))
-    plt.plot(dates, currents_uA, label='Current', alpha=0.7)
-    plt.plot(dates, baseline_uA, label='Baseline (rolling)', linestyle='--', color='black')
-    for ts, mag, spike_val, baseline_val in spikes_info:
-        plt.scatter(ts, spike_val, color='red', zorder=5, label='Spike' if 'Spike' not in plt.gca().get_legend_handles_labels()[1] else "")
-        plt.vlines(ts, spike_val, baseline_val, color='orange', linestyle=':', label='Magnitude' if 'Magnitude' not in plt.gca().get_legend_handles_labels()[1] else "")
-    plt.xlabel("Time")
-    plt.ylabel("Current (uA)")
-    plt.title("Detected Spikes with Rolling Baseline")
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path)
-        print(f"Saved plot to {save_path}")
-    if show_plot:
-        plt.show()
-    plt.close()
-
-def exponential_pdf(t, tau):
-    return (1/tau) * np.exp(-t/tau)
-
-def plot_spike_intervals_and_fit(spikes, bins=30, time_unit='s', save_path=None, show_plot=True):
-    if len(spikes) < 2:
-        return
-    times = [entry[0] for entry in spikes]
-    delta_ts = np.diff([t.timestamp() for t in times])
-    factor = {'s': 1, 'min': 60, 'h': 3600}[time_unit]
-    delta_ts /= factor
-    hist_vals, bin_edges = np.histogram(delta_ts, bins=bins, density=True)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-    mean_dt = np.mean(delta_ts)
-    popt, pcov = curve_fit(exponential_pdf, bin_centers, hist_vals, p0=[mean_dt])
-    tau_fit = popt[0]
-    tau_err = np.sqrt(np.diag(pcov))[0]
-    plt.figure(figsize=(8, 5))
-    plt.hist(delta_ts, bins=bins, density=True, alpha=0.5, histtype='step', label="Data", color="gray", edgecolor='black')
-    t_fit = np.linspace(min(delta_ts), max(delta_ts), 300)
-    plt.plot(t_fit, exponential_pdf(t_fit, *popt), 'r--', label=fr"Fit: $\tau$ = {tau_fit:.3f} ± {tau_err:.3f} ({time_unit})")
-    plt.xlabel(f"Interval between spikes ({time_unit})")
-    plt.ylabel("Probability Density")
-    plt.title("Spike Interval Distribution with Exponential Fit")
-    plt.legend()
-    plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path)
-    if show_plot:
-        plt.show()
-    plt.close()
-
-def plot_overall_intervals(times, bins=30, time_unit='min', title=None, save_path=None, show_plot=True, x_min=0, x_max=500):
-    if times is None or len(times) < 2:
-        print("Not enough timestamps to compute overall intervals.")
-        return None, None
-    times_sorted = sorted(times)
-    deltas = np.diff([t.timestamp() for t in times_sorted])
-    factor = {'s': 1, 'min': 60, 'h': 3600}[time_unit]
-    deltas = deltas / factor
-    in_range = (deltas >= x_min) & (deltas <= x_max)
-    deltas_plot = deltas[in_range] if np.any(in_range) else deltas
-    hist_vals, bin_edges = np.histogram(deltas_plot, bins=bins, range=(x_min, x_max), density=True)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-    mean_dt = np.mean(deltas_plot) if len(deltas_plot) else np.mean(deltas)
-    try:
-        popt, pcov = curve_fit(exponential_pdf, bin_centers, hist_vals, p0=[mean_dt])
-        tau_fit = popt[0]
-        tau_err = np.sqrt(np.diag(pcov))[0]
-    except Exception as exc:
-        print(f"Exponential fit failed: {exc}")
-        tau_fit, tau_err = np.nan, np.nan
-    plt.figure(figsize=(8, 5))
-    plt.hist(deltas_plot, bins=bins, range=(x_min, x_max), density=True, alpha=0.5, histtype='step', color='gray', edgecolor='black', label='Data')
-    if np.isfinite(tau_fit):
-        t_fit = np.linspace(x_min, x_max, 300)
-        plt.plot(t_fit, exponential_pdf(t_fit, tau_fit), 'r--', label=f"Fit: tau = {tau_fit:.3f} ± {tau_err:.3f} {time_unit}")
-    plt.xlabel(f"Interval between spikes ({time_unit})")
-    plt.ylabel("Probability Density")
-    if not title:
-        title = "Overall Inter-spike Interval Distribution"
-    plt.title(title)
-    plt.xlim(x_min, x_max)
-    plt.legend()
-    plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path)
-        print(f"Saved overall interval plot to {save_path}")
-    if show_plot:
-        plt.show()
-    plt.close()
-    print(f"Overall mean interval: {mean_dt:.3f} {time_unit}")
-    if np.isfinite(tau_fit):
-        print(f"Overall fitted tau: {tau_fit:.4f} ± {tau_err:.4f} {time_unit}")
-    return tau_fit, tau_err
-
-def compute_total_discharge_charge(spikes, tau_fixed=6.6):
-    total_charge = sum(mag * tau_fixed for _, mag, _, _ in spikes)
-    if spikes:
-        avg_charge = total_charge / len(spikes)
-        magnitudes = np.array([mag for _, mag, _, _ in spikes])
-        rms_magnitude = np.sqrt(np.mean(magnitudes**2))
-        error_estimate = rms_magnitude * tau_fixed / np.sqrt(len(spikes))
-
-        # Frequency calculation
-        times = [ts for ts, *_ in spikes]
-        if len(times) >= 2:
-            duration_sec = (max(times) - min(times)).total_seconds()
-            freq_hz = len(spikes) / duration_sec if duration_sec > 0 else float('nan')
-            freq_per_hr = freq_hz * 3600 if duration_sec > 0 else float('nan')
-            duration_hr = duration_sec / 3600.0 if duration_sec > 0 else float('nan')
-            n_spikes = len(spikes)
-            freq_per_hr = n_spikes / duration_hr if duration_hr > 0 else float('nan')
-                # Poisson error: sqrt(N)/duration
-            freq_per_hr_err = np.sqrt(n_spikes) / duration_hr if duration_hr > 0 else float('nan')
-        else:
-            pass
-    else:
-        pass
-    return total_charge
 
 def analyze_single_pair(beam_file, tco_file, threshold_uA=30e-3, tau_fixed=6.6, window_length=2500, polyorder=2, save_plots=False, show_plots=True, out_dir=None):
     dates, currents = load_combined_data(beam_file, tco_file)
@@ -248,23 +91,35 @@ def analyze_single_pair(beam_file, tco_file, threshold_uA=30e-3, tau_fixed=6.6, 
         polyorder=polyorder
     )
     label = os.path.basename(beam_file) + " + " + os.path.basename(tco_file)
+    out_root = Path(out_dir) if out_dir else None
+    if save_plots and out_root:
+        out_root.mkdir(parents=True, exist_ok=True)
     dist_path = None
-    if save_plots and out_dir:
-        dist_path = os.path.join(out_dir, f"{os.path.basename(beam_file)}_{os.path.basename(tco_file)}_dist.png")
+    if save_plots and out_root:
+        dist_path = out_root / f"{os.path.basename(beam_file)}_{os.path.basename(tco_file)}_dist.png"
     plot_spike_distribution(spikes, label, threshold_uA, bins=20, value="magnitude", save_path=dist_path, show_plot=show_plots)
     base_path = None
-    if save_plots and out_dir:
-        base_path = os.path.join(out_dir, f"{os.path.basename(beam_file)}_{os.path.basename(tco_file)}_baseline.png")
+    if save_plots and out_root:
+        base_path = out_root / f"{os.path.basename(beam_file)}_{os.path.basename(tco_file)}_baseline.png"
     plot_spikes_with_baseline(dates, currents_uA, spikes, baseline, save_path=base_path, show_plot=show_plots)
     int_path = None
-    if save_plots and out_dir:
-        int_path = os.path.join(out_dir, f"{os.path.basename(beam_file)}_{os.path.basename(tco_file)}_intervals.png")
+    if save_plots and out_root:
+        int_path = out_root / f"{os.path.basename(beam_file)}_{os.path.basename(tco_file)}_intervals.png"
     plot_spike_intervals_and_fit(spikes, bins=25, time_unit='min', save_path=int_path, show_plot=show_plots)
     compute_total_discharge_charge(spikes, tau_fixed=tau_fixed)
 
 
 def _extract_date_from_path(path, default_year=None):
     base = os.path.basename(path)
+    flat_match = re.fullmatch(r"(beam|tco)-(\d{4})-(\d{2})-(\d{2})\.csv", base, re.IGNORECASE)
+    if flat_match:
+        year = int(flat_match.group(2))
+        month = int(flat_match.group(3))
+        day = int(flat_match.group(4))
+        try:
+            return datetime(year, month, day)
+        except ValueError:
+            return None
     name_match = re.search(r"_(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(\d{1,2})", base)
     if not name_match:
         return None
@@ -303,8 +158,8 @@ def _filter_dates(dates, start_date=None, end_date=None):
 def find_beam_tco_pairs(start_date=None, end_date=None):
     data_root = str(fcspikes_root())
     default_year = start_date.year if start_date else datetime.now().year
-    beam_files = glob.glob(os.path.join(data_root, "csv", "beam", "**", "BEAM_*.csv"), recursive=True)
-    tco_files = glob.glob(os.path.join(data_root, "csv", "tco", "**", "TCO_*.csv"), recursive=True)
+    beam_files = glob.glob(os.path.join(data_root, "beam-*.csv"))
+    tco_files = glob.glob(os.path.join(data_root, "tco-*.csv"))
 
     beam_by_date = _collect_by_date(beam_files, default_year)
     tco_by_date = _collect_by_date(tco_files, default_year)
@@ -317,8 +172,8 @@ def find_beam_tco_pairs(start_date=None, end_date=None):
 def list_available_dates(start_date=None, end_date=None):
     data_root = str(fcspikes_root())
     default_year = start_date.year if start_date else datetime.now().year
-    beam_files = glob.glob(os.path.join(data_root, "csv", "beam", "**", "BEAM_*.csv"), recursive=True)
-    tco_files = glob.glob(os.path.join(data_root, "csv", "tco", "**", "TCO_*.csv"), recursive=True)
+    beam_files = glob.glob(os.path.join(data_root, "beam-*.csv"))
+    tco_files = glob.glob(os.path.join(data_root, "tco-*.csv"))
     beam_by_date = _collect_by_date(beam_files, default_year)
     tco_by_date = _collect_by_date(tco_files, default_year)
     beam_dates = _filter_dates(beam_by_date.keys(), start_date=start_date, end_date=end_date)
@@ -349,6 +204,10 @@ def process_range_with_summary(pairs, data_dir, tau_fixed=6.6, threshold_uA=30e-
     all_ts_file = str(spike_timestamps_path(all_ts_filename))
     os.makedirs(os.path.dirname(all_ts_file), exist_ok=True)
     fout_all = open(all_ts_file, "w")
+
+    output_root = Path(data_dir) if data_dir else None
+    if save_plots and output_root:
+        output_root.mkdir(parents=True, exist_ok=True)
 
     for _, beam_file, tco_file in pairs:
         try:
@@ -419,18 +278,18 @@ def process_range_with_summary(pairs, data_dir, tau_fixed=6.6, threshold_uA=30e-
                         combined_label = f"{os.path.basename(beam_file)} + {os.path.basename(tco_file)} ({segment_label})"
                         safe_label = segment_label.replace(" ", "")
 
-                        p_dist = os.path.join(data_dir, f"{safe_label}_dist.png") if save_plots else None
+                        p_dist = output_root / f"{safe_label}_dist.png" if (save_plots and output_root) else None
                         plot_spike_distribution(
                             spikes, combined_label, threshold_uA, bins=20, value="magnitude",
                             save_path=p_dist, show_plot=show_plots
                         )
 
-                        p_base = os.path.join(data_dir, f"{safe_label}_baseline.png") if save_plots else None
+                        p_base = output_root / f"{safe_label}_baseline.png" if (save_plots and output_root) else None
                         plot_spikes_with_baseline(
                             seg_dates, seg_currents_uA, spikes, baseline, save_path=p_base, show_plot=show_plots
                         )
 
-                        p_int = os.path.join(data_dir, f"{safe_label}_intervals.png") if save_plots else None
+                        p_int = output_root / f"{safe_label}_intervals.png" if (save_plots and output_root) else None
                         plot_spike_intervals_and_fit(
                             spikes, bins=25, time_unit='min', save_path=p_int, show_plot=show_plots
                         )
@@ -504,9 +363,9 @@ def process_range_with_summary(pairs, data_dir, tau_fixed=6.6, threshold_uA=30e-
 
     fig.autofmt_xdate()
     plt.tight_layout()
-    if save_plots:
+    if save_plots and output_root:
         summary_filename = f"summary_{start_day}_to_{end_day}_halfday.png"
-        summary_path = os.path.join(data_dir, summary_filename)
+        summary_path = output_root / summary_filename
         fig.savefig(summary_path)
         print(f"Saved summary plot to {summary_path}")
     if show_plots:
@@ -515,7 +374,7 @@ def process_range_with_summary(pairs, data_dir, tau_fixed=6.6, threshold_uA=30e-
 
     if not summary_only and len(all_spike_times) >= 2:
         interval_title = f"Inter-spike Intervals: {start_day} to {end_day} (half-day segments)"
-        interval_path = os.path.join(data_dir, f"intervals_{start_day}_to_{end_day}_halfday.png") if save_plots else None
+        interval_path = output_root / f"intervals_{start_day}_to_{end_day}_halfday.png" if (save_plots and output_root) else None
         plot_overall_intervals(
             all_spike_times,
             bins=200,
