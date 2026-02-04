@@ -10,6 +10,12 @@ __pycache__/
 # Local data + outputs (keep scripts only by default)
 data/
 figures/
+results/
+
+# Plot files
+*.png
+*.jpg
+*.jpeg
 
 # Local reports
 redundant_report.json
@@ -19,3 +25,6 @@ src/legacy_redundant_*/
 
 # Legacy subproject (optional)
 BPcurrentStudy/
+-e .DS_Store
+.venv/
+__pycache__/

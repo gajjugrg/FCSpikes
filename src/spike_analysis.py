@@ -400,7 +400,8 @@ if __name__ == "__main__":
     parser.add_argument("--save-plots", action="store_true", help="Save plots to output directory.")
     parser.add_argument("--show-plots", "--show", action="store_true", help="Show plots interactively.")
     parser.add_argument("--summary-only", action="store_true", help="Only generate the final summary plot (avg charge and spike rate).")
-    parser.add_argument("--out-dir", default=str(fcspikes_root()), help="Output directory for plots.")
+    default_out_dir = Path(__file__).resolve().parents[1] / "results" / "analysis" / "spike_analysis"
+    parser.add_argument("--out-dir", default=str(default_out_dir), help="Output directory for plots.")
 
     args = parser.parse_args()
 

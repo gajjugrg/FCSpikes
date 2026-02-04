@@ -424,7 +424,7 @@ def main() -> None:
 	default_input = root / "data" / "csv" / "ramping" / "HV_ramp_Nov27.csv"
 	default_input2 = root / "data" / "csv" / "ramping" / "HV_ramp_Dec6.csv"
 	default_input3 = root / "data" / "csv" / "ramping" / "HV_ramp_Dec15.csv"
-	default_out_dir = root / "figures" / "analysis" / "ramping_hv"
+	default_out_dir = root / "results" / "analysis" / "ramping_hv"
 	default_calibration = root / "data" / "calibration_data.txt"
 
 	default_inputs: list[Path] = [default_input]

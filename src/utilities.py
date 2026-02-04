@@ -83,11 +83,16 @@ def find_tco_csv(day_tag: str) -> Path:
 
 
 def spike_timestamps_path(filename: str) -> Path:
-    return fcspikes_root() / "txt" / "spike_timestamps" / filename
+    return results_root() / "txt" / "spike_timestamps" / filename
+
+
+def results_root() -> Path:
+    return (project_root() / "results").resolve()
 
 
 def figures_root() -> Path:
-    return (project_root() / "figures").resolve()
+    """Backward-compatible alias for results_root()."""
+    return results_root()
 
 
 def _month_folder_from_label(label: str) -> str:

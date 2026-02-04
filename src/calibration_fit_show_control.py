@@ -76,7 +76,7 @@ def main() -> None:
 	"""CLI entrypoint."""
 	root = Path(__file__).resolve().parents[1]
 	default_input = root / "data" / "calibration_data.txt"
-	default_out = root / "figures" / "analysis" / "calibration_show_control"
+	default_out = root / "results" / "analysis" / "calibration_show_control"
 
 	p = argparse.ArgumentParser(description="Fit calibration: Heinzinger (true) vs Slow Control (monitored).")
 	p.add_argument("--input", default=str(default_input), help="Path to calibration_data.txt (default: data/calibration_data.txt)")
