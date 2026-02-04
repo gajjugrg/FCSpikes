@@ -4,9 +4,7 @@
 
 - `data/beam-YYYY-MM-DD.csv`
 - `data/tco-YYYY-MM-DD.csv`
-- `BPcurrentStudy/data/current_discharge_study/` (state for Beam Plug current discharge study)
-- `BPcurrentStudy/figures/analysis/current_discharge_study/` (Beam Plug current discharge study plots)
-- `figures/daily/<Month>/` and `figures/aggregates/...` (outputs from other FC spike scripts)
+- `results/analysis/...` (outputs: plots, CSV summaries)
 
 ## Python environment
 
@@ -58,104 +56,6 @@ python src/hv_ramping_top_detector_by_plateau.py --save-plots
 # Calibration fit/summary
 python src/calibration_fit_show_control.py
 ```
-
-## Beam Plug current/discharge study
-
-Implementation:
-- `BPcurrentStudy/src/currentDischargeStudy.py`
-
-Code layout (refactored):
-- `BPcurrentStudy/src/currentDischargeStudy.py`: thin CLI entrypoint/orchestrator
-- `BPcurrentStudy/src/cds_data.py`: CSV parsing + timestamp extraction; cleans `±inf` and records saturation flags
-- `BPcurrentStudy/src/cds_signal.py`: smoothing helpers + onset/timing helpers + auto-classification
-- `BPcurrentStudy/src/cds_cache.py`: safe NPZ cache for charge + timing metrics
-- `BPcurrentStudy/src/cds_plotting.py`: plotting (overlays, scatter, coincidences)
-
-Entry point (recommended; keeps older commands working):
-- `src/currentDischargeStudy.py`
-
-Default outputs/state:
- Plots: `BPcurrentStudy/figures/analysis/current_discharge_study/`
- State: `BPcurrentStudy/data/current_discharge_study/`
-
-Common usage:
-
-```bash
-# Scan and generate plots for the default folder/pattern
-python BPcurrentStudy/src/currentDischargeStudy.py --n-files 25
-
-# Use a local folder (example: gapped_files in this repo)
-python BPcurrentStudy/src/currentDischargeStudy.py --folder BPcurrentStudy/data/current_discharge_study/gapped_files --pattern 'SaveOnEvent*.csv'
-```
-
-Notes:
-- macOS may create `._*.csv` AppleDouble files on external drives; the scripts generally ignore these.
-- CH3-vs-CH1 scatter uses a cache in `BPcurrentStudy/data/current_discharge_study/` to speed reruns.
-- CH3/CH1 charge integration for the CH3-vs-CH1 scatter matches the per-event overlays: integrate the **signed baseline-subtracted** smoothed waveform in a fixed time window `TIME ∈ [0, tmax]` (negative-going CH3 pulses yield negative charge).
-- CSV loading removes `±inf` samples (which can appear on saturated scope channels) and keeps `df.attrs["ch*_saturated"]` flags for QA.
-
-### Auto-classification (waveform shape)
-
-Classification labels are stored in:
-- `BPcurrentStudy/data/current_discharge_study/file_status.json`
-
-Run it like:
-
-```bash
-# classify only currently-unclassified files (recommended)
-python BPcurrentStudy/src/currentDischargeStudy.py --auto-classify
-
-# force re-classification of all files
-python BPcurrentStudy/src/currentDischargeStudy.py --auto-classify --auto-all
-```
-
-How classification works (high level):
-- Load one file, clean NaN/±inf, keep raw channels (`CH1_raw`, `CH3_raw`).
-- Compute a **baseline** from the first `--auto-baseline-window` samples (default 500).
-  - The window is interpreted as “N samples”; internally we convert to a time span using the file’s median `Δt`.
-- Estimate baseline noise using a robust MAD-based sigma.
-- Subtract baseline and look at the max positive and negative excursions.
-- If neither excursion exceeds `--auto-noise-sigma × sigma` → `noise`
-- If both exceed the threshold and are comparable (ratio ≥ `--auto-bipolar-ratio`) → `bipolar`
-- Otherwise → `unipolar_positive` or `unipolar_negative`
-
-If the classifications don’t match what you expect, the most important tuning knobs are:
-- `--auto-noise-sigma` (lower = more things become “real”, higher = more “noise”)
-- `--auto-baseline-window` (baseline duration; too short can mis-estimate noise, too long can include the event)
-- `--auto-channel` (CH3 is usually best)
-
-### Interactive classification (manual)
-
-You can also label events yourself in an interactive matplotlib window.
-
-This mode **autosaves** labels to:
-- `BPcurrentStudy/data/current_discharge_study/file_status.json`
-
-Run it like:
-
-```bash
-# classify only currently-unclassified files (default behavior)
-python BPcurrentStudy/src/currentDischargeStudy.py --interactive-classify --n-files 200 --no-ch3-vs-ch1
-
-# review/re-label *all* files (including already-classified)
-python BPcurrentStudy/src/currentDischargeStudy.py --interactive-classify --interactive-all --n-files -1 --no-ch3-vs-ch1
-
-# don’t save per-event annotated overlay plots while you label
-python BPcurrentStudy/src/currentDischargeStudy.py --interactive-classify --interactive-all --interactive-no-save-plots --no-ch3-vs-ch1
-```
-
-Keybinds in the plot window:
-- `1` → `bipolar`
-- `2` → `unipolar_positive`
-- `3` → `unipolar_negative`
-- `0` → `noise`
-- `s` / `space` → skip (no change)
-- `backspace` / left arrow → previous file
-- `q` / `esc` → quit
-
-Notes:
-- `--interactive-classify` forces `--show` internally (it needs a GUI backend).
-- If you see “No files matched the interactive classification filter”, you likely already labeled everything; add `--interactive-all`.
 
 ## One-off helper scripts
 
