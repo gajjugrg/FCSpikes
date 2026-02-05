@@ -30,11 +30,9 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.dates import date2num
-from scipy.signal import savgol_filter, find_peaks, medfilt
-from scipy import sparse
-from scipy.sparse.linalg import spsolve
+from scipy.signal import find_peaks
 
-from utilities import fcspikes_root, figures_root, spike_timestamps_path
+from utilities import channel_cols, compute_baseline, fcspikes_root, figures_root, spike_timestamps_path
 
 
 # Hard-coded data quality exclusions / baseline reset points (per logbook notes).
@@ -311,141 +309,6 @@ def _plot_exp_fit_diagnostic(
     plt.close(fig)
 
 
-def _adaptive_savgol(y: np.ndarray, window_length: int, polyorder: int) -> np.ndarray:
-    y = np.asarray(y)
-    n = y.size
-    if n == 0:
-        return y
-
-    max_odd = n if (n % 2 == 1) else (n - 1)
-    wl = min(int(window_length), max_odd)
-
-    if wl <= polyorder:
-        wl = polyorder + 1 if ((polyorder + 1) % 2 == 1) else (polyorder + 2)
-        wl = min(wl, max_odd)
-        if wl <= polyorder:
-            return y.copy()
-
-    try:
-        return savgol_filter(y, wl, polyorder, mode="nearest")
-    except Exception:
-        return y.copy()
-
-
-def _fill_nan_1d(y: np.ndarray) -> np.ndarray:
-    y = np.asarray(y, dtype=float)
-    if y.size == 0:
-        return y
-    if np.all(np.isfinite(y)):
-        return y
-    x = np.arange(y.size, dtype=float)
-    m = np.isfinite(y)
-    if not np.any(m):
-        return np.zeros_like(y)
-    y2 = y.copy()
-    y2[~m] = np.interp(x[~m], x[m], y[m])
-    return y2
-
-
-def _baseline_median_savgol(y: np.ndarray, *, median_kernel: int, window_length: int, polyorder: int) -> np.ndarray:
-    y = _fill_nan_1d(y)
-    n = y.size
-    if n == 0:
-        return y
-
-    # Median filter kernel must be odd and <= n.
-    k = int(median_kernel)
-    if k < 1:
-        return _adaptive_savgol(y, window_length=window_length, polyorder=polyorder)
-    if k % 2 == 0:
-        k += 1
-    if k > n:
-        k = n if (n % 2 == 1) else (n - 1)
-    if k <= 1:
-        y_med = y
-    else:
-        y_med = medfilt(y, kernel_size=k)
-
-    return _adaptive_savgol(y_med, window_length=window_length, polyorder=polyorder)
-
-
-def _baseline_asls(
-    y: np.ndarray,
-    *,
-    lam: float,
-    p: float,
-    niter: int,
-) -> np.ndarray:
-    """Asymmetric least squares baseline, adapted for negative-going spikes.
-
-    We solve the standard AsLS on the *negated* signal so negative dips become
-    positive peaks, then flip the baseline back.
-    """
-
-    y = _fill_nan_1d(y)
-    n = int(y.size)
-    if n < 3:
-        return y.copy()
-
-    lam = float(lam)
-    p = float(p)
-    niter = int(niter)
-    if not np.isfinite(lam) or lam <= 0:
-        return y.copy()
-    if not np.isfinite(p) or p <= 0 or p >= 1:
-        return y.copy()
-    if niter <= 0:
-        return y.copy()
-
-    y_flip = -y
-
-    # Second-difference matrix (n-2 x n)
-    data = np.vstack(
-        [
-            np.ones(n, dtype=float),
-            -2.0 * np.ones(n, dtype=float),
-            np.ones(n, dtype=float),
-        ]
-    )
-    D = sparse.spdiags(data, np.array([0, 1, 2], dtype=int), n - 2, n).tocsc()
-    DTD = D.T @ D
-
-    w = np.ones(n, dtype=float)
-    z = np.zeros(n, dtype=float)
-    for _ in range(niter):
-        W = sparse.diags(w, 0, shape=(n, n), format="csc")
-        z = spsolve(W + lam * DTD, w * y_flip)
-        # Standard AsLS weights for positive peaks: downweight points above baseline.
-        w = np.where(y_flip > z, p, 1.0 - p)
-
-    return -np.asarray(z, dtype=float)
-
-
-def _compute_baseline(
-    y: np.ndarray,
-    *,
-    method: str,
-    window_length: int,
-    polyorder: int,
-    median_kernel: int,
-    asls_lam: float,
-    asls_p: float,
-    asls_niter: int,
-) -> np.ndarray:
-    method = str(method).lower()
-    if method == "median_savgol":
-        return _baseline_median_savgol(
-            y,
-            median_kernel=median_kernel,
-            window_length=window_length,
-            polyorder=polyorder,
-        )
-    if method == "asls":
-        return _baseline_asls(y, lam=asls_lam, p=asls_p, niter=asls_niter)
-    # Default: legacy SavGol-only baseline.
-    return _adaptive_savgol(_fill_nan_1d(y), window_length=window_length, polyorder=polyorder)
-
-
 def _read_hvramping_csv(path: Path) -> pd.DataFrame:
     """Read the ramping CSV format with two header rows.
 
@@ -563,17 +426,13 @@ def _plot_cathode_voltage_and_termination_currents(
     plt.close(fig)
 
 
-def _channel_cols(prefix: str, channels: Iterable[int]) -> list[str]:
-    return [f"{prefix}_Channel{ch:02d}" for ch in channels]
-
-
 def _combined_detector_current_a(
     beam_df: pd.DataFrame,
     tco_df: pd.DataFrame,
     grouping: DetectorGrouping,
 ) -> pd.Series:
-    beam_cols = [c for c in _channel_cols("FC_Beam", grouping.beam_channels) if c in beam_df.columns]
-    tco_cols = [c for c in _channel_cols("TCO", grouping.tco_channels) if c in tco_df.columns]
+    beam_cols = [c for c in channel_cols("FC_Beam", grouping.beam_channels) if c in beam_df.columns]
+    tco_cols = [c for c in channel_cols("TCO", grouping.tco_channels) if c in tco_df.columns]
 
     if not beam_cols:
         raise ValueError("No BEAM channel columns found for requested grouping.")
@@ -619,7 +478,7 @@ def _detect_spikes_with_savgol(
     detector_name: str,
     segment_label: str,
 ):
-    baseline = _compute_baseline(
+    baseline = compute_baseline(
         currents_uA,
         method=baseline_method,
         window_length=window_length,
